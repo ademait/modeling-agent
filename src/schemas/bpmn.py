@@ -105,6 +105,35 @@ class SystemBPMNSpec(BaseModel):
 
 # -- Modification schemas --
 
+class BPMNSwimlaneSpec(BaseModel):
+    """Spec for a single swimlane (participant lane) within a pool."""
+    id: str = Field(min_length=1, max_length=40, description="Short unique slug (e.g. 'supervisor', 'coder').")
+    name: str = Field(max_length=60, description="Lane label (e.g. 'Supervisor', 'Coder Agent').")
+    isAgentic: bool = Field(default=True, description="Whether this lane represents an AI agent.")
+    role: Optional[Literal["manager", "worker"]] = Field(default="worker", description="Agent role: 'manager' orchestrates, 'worker' executes tasks.")
+    trustScore: int = Field(default=0, ge=0, le=100, description="Trust score (0-100) for this agent lane.")
+    multiplicity: int = Field(default=1, ge=1, description="Number of agent instances running in this lane.")
+
+
+class BPMNPoolSpec(BaseModel):
+    """Spec for a collaboration pool containing one or more swimlanes."""
+    id: str = Field(min_length=1, max_length=40, description="Short unique slug for the pool (e.g. 'swarm').")
+    name: str = Field(max_length=60, description="Pool name (e.g. 'Agent Swarm', 'Order Process').")
+    swimlanes: List[BPMNSwimlaneSpec] = Field(min_length=1, description="Ordered list of swimlanes (participants) in this pool.")
+
+
+class SystemAgenticBPMNSpec(BaseModel):
+    """Schema for a BPMN process with pools and swimlanes (agentic BPMN).
+
+    Nodes must each have an 'owner' field set to the swimlane id they belong to.
+    Flows can cross swimlane boundaries (cross-lane coordination).
+    """
+    systemName: str = Field(default="", description="Descriptive name for the collaboration (e.g. 'Agent Swarm Process').")
+    pools: List[BPMNPoolSpec] = Field(min_length=1, description="Collaboration pools. Each pool contains swimlanes (participants).")
+    nodes: List[BPMNNodeSpec] = Field(min_length=1, description="Flow nodes (tasks, events, gateways). Each MUST have 'owner' set to a swimlane id.")
+    flows: List[BPMNFlowSpec] = Field(default_factory=list, description="Sequence flows connecting nodes across and within lanes.")
+
+
 class BPMNModificationTarget(BaseModel):
     nodeId: Optional[str] = Field(
         default=None,
@@ -125,6 +154,8 @@ class BPMNModificationTarget(BaseModel):
         default=None,
         description="Id of a flow to remove (optional; remove_flow may use source/target instead).",
     )
+    poolName: Optional[str] = Field(default=None, description="Pool name/id for add_swimlane or remove_pool.")
+    swimlaneName: Optional[str] = Field(default=None, description="Swimlane name/id for modify_swimlane or remove_swimlane.")
 
 
 class BPMNModificationChanges(BaseModel):
@@ -164,12 +195,19 @@ class BPMNModificationChanges(BaseModel):
         max_length=40,
         description="Optional flow label for add_flow (branch condition).",
     )
+    role: Optional[Literal["manager", "worker"]] = Field(default=None, description="Swimlane role for add_swimlane/modify_swimlane.")
+    isAgentic: Optional[bool] = Field(default=None, description="Whether this swimlane/task is agentic.")
+    trustScore: Optional[int] = Field(default=None, description="Trust score (0-100) for add_swimlane/modify_swimlane.")
+    multiplicity: Optional[int] = Field(default=None, description="Number of agent instances for add_swimlane.")
+    poolName: Optional[str] = Field(default=None, description="Pool name/id for add_swimlane (which pool to add the lane to).")
+    owner: Optional[str] = Field(default=None, description="Swimlane name/id for add_task/add_event when placing inside a specific lane.")
 
 
 class BPMNModification(BaseModel):
     action: Literal[
         "add_task", "add_gateway", "add_event",
         "add_flow", "modify_node", "remove_flow", "remove_element",
+        "add_pool", "add_swimlane", "modify_swimlane", "remove_swimlane", "remove_pool",
     ] = Field(description="Action to perform.")
     target: BPMNModificationTarget = Field(description="Identifies the element to act on.")
     changes: Optional[BPMNModificationChanges] = Field(

@@ -758,7 +758,7 @@ Operation types:
 1) model:
 {{
   "type": "model",
-  "diagramType": "ClassDiagram|ObjectDiagram|StateMachineDiagram|AgentDiagram|GUINoCodeDiagram|QuantumCircuitDiagram|BPMN",
+  "diagramType": "ClassDiagram|ObjectDiagram|StateMachineDiagram|AgentDiagram|GUINoCodeDiagram|QuantumCircuitDiagram|BPMN|ComponentDiagram|DeploymentDiagram",
   "mode": "complete_system|modify_model",
   "request": "sub-request focused ONLY on this specific diagram type"
 }}

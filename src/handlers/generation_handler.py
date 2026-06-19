@@ -135,6 +135,7 @@ _DIAGRAM_TYPE_TOKENS = [
     "agent diagram", "gui diagram", "quantum circuit", "quantum diagram",
     "structural diagram", "domain model", "structural model",
     "bpmn", "business process", "process diagram",
+    "component diagram", "deployment diagram",
 ]
 
 # Pre-compiled patterns for _is_diagram_creation_request (avoid recompiling).
@@ -607,6 +608,7 @@ def handle_generation_request(session: Session, request: AssistantRequest) -> Di
             "state diagram", "structural diagram", "domain model",
             "quantum circuit", "quantum diagram", "agent diagram",
             "bpmn", "business process", "process diagram",
+            "component diagram", "deployment diagram",
         ]
         if any(token in _lower_msg for token in _non_gui_diagram_tokens):
             _clear_pending_state(session)

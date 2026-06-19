@@ -24,6 +24,18 @@ KEYWORD_TARGETS = [
     ("process diagram", "BPMN"),
     ("process model", "BPMN"),
     ("workflow diagram", "BPMN"),
+    # Component Diagram
+    ("component diagram", "ComponentDiagram"),
+    ("component model", "ComponentDiagram"),
+    ("uml component", "ComponentDiagram"),
+    ("software architecture", "ComponentDiagram"),
+    ("system architecture", "ComponentDiagram"),
+    # Deployment Diagram
+    ("deployment diagram", "DeploymentDiagram"),
+    ("deployment model", "DeploymentDiagram"),
+    ("deploy diagram", "DeploymentDiagram"),
+    ("infrastructure diagram", "DeploymentDiagram"),
+    ("deployment topology", "DeploymentDiagram"),
     # Agent
     ("agent diagram", "AgentDiagram"),
     ("agent model", "AgentDiagram"),
@@ -113,6 +125,17 @@ _IMPLICIT_PATTERNS: List[Tuple[str, re.Pattern]] = [
         r"|(?:frontend|screens?|pages?|layouts?|dashboards?)\b.{0,30}\b(?:design|create|build|diagram)"
         r"|(?:create|build|design)\b.{0,30}\b(?:frontend|screens?|pages?|layouts?))\b", re.I)),
 
+    # ── Component Diagram ──
+    ("ComponentDiagram", re.compile(
+        r"\b(?:component\s+diagram|software\s+architecture|system\s+architecture"
+        r"|components?\s+(?:diagram|model)|subsystem|service\s+(?:architecture|diagram))\b", re.I)),
+
+    # ── Deployment Diagram ──
+    ("DeploymentDiagram", re.compile(
+        r"\b(?:deployment\s+(?:diagram|model|topology)|deploy\s+diagram"
+        r"|infrastructure\s+(?:diagram|topology)|server\s+topology"
+        r"|node\s+(?:diagram|topology)|docker\s+(?:deployment|topology))\b", re.I)),
+
     # ── Class Diagram (structural vocabulary — checked last among specifics) ──
     # Either a strong standalone signal (structural, domain model) or
     # class/entity co-occurring with attribute/method/relationship.
@@ -144,6 +167,8 @@ FALLBACK_PRIORITY: Tuple[str, ...] = (
     "GUINoCodeDiagram",
     "QuantumCircuitDiagram",
     "BPMN",
+    "ComponentDiagram",
+    "DeploymentDiagram",
 )
 
 

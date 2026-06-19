@@ -67,10 +67,34 @@ from .bpmn import (
     BPMNNodeSpec,
     BPMNFlowSpec,
     SystemBPMNSpec,
+    BPMNSwimlaneSpec,
+    BPMNPoolSpec,
+    SystemAgenticBPMNSpec,
     BPMNModificationTarget,
     BPMNModificationChanges,
     BPMNModification,
     BPMNModificationResponse,
+)
+from .component_diagram import (
+    ComponentSubsystemSpec,
+    ComponentSpec,
+    ComponentDependencySpec,
+    SystemComponentSpec,
+    ComponentModificationTarget,
+    ComponentModificationChanges,
+    ComponentModification,
+    ComponentModificationResponse,
+)
+from .deployment_diagram import (
+    DeploymentNodeSpec,
+    DeploymentArtifactSpec,
+    DeploymentComponentSpec,
+    DeploymentDependencySpec,
+    SystemDeploymentSpec,
+    DeploymentModificationTarget,
+    DeploymentModificationChanges,
+    DeploymentModification,
+    DeploymentModificationResponse,
 )
 
 __all__ = [
@@ -100,6 +124,16 @@ __all__ = [
     "QuantumModificationSpec",
     # BPMN
     "BPMNNodeSpec", "BPMNFlowSpec", "SystemBPMNSpec",
+    "BPMNSwimlaneSpec", "BPMNPoolSpec", "SystemAgenticBPMNSpec",
     "BPMNModificationTarget", "BPMNModificationChanges",
     "BPMNModification", "BPMNModificationResponse",
+    # Component Diagram
+    "ComponentSubsystemSpec", "ComponentSpec", "ComponentDependencySpec",
+    "SystemComponentSpec", "ComponentModificationTarget", "ComponentModificationChanges",
+    "ComponentModification", "ComponentModificationResponse",
+    # Deployment Diagram
+    "DeploymentNodeSpec", "DeploymentArtifactSpec", "DeploymentComponentSpec",
+    "DeploymentDependencySpec", "SystemDeploymentSpec",
+    "DeploymentModificationTarget", "DeploymentModificationChanges",
+    "DeploymentModification", "DeploymentModificationResponse",
 ]

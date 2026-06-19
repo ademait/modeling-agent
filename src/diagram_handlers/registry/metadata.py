@@ -52,6 +52,20 @@ DIAGRAM_TYPE_METADATA = {
         "description": "Model business processes with tasks, gateways, and flows",
         "keywords": ["bpmn", "business process", "process", "gateway", "task", "workflow"],
     },
+    "ComponentDiagram": {
+        "name": "Component Diagram",
+        "icon": "component",
+        "elements": ["Subsystem", "Component", "ComponentDependency"],
+        "description": "Model software components, subsystems, and their dependencies",
+        "keywords": ["component", "subsystem", "service", "dependency", "architecture", "module"],
+    },
+    "DeploymentDiagram": {
+        "name": "Deployment Diagram",
+        "icon": "deployment",
+        "elements": ["DeploymentNode", "DeploymentArtifact", "DeploymentComponent", "DeploymentDependency"],
+        "description": "Model deployment topology with nodes, artifacts, and communication paths",
+        "keywords": ["deployment", "node", "artifact", "server", "infrastructure", "cloud"],
+    },
 }
 
 

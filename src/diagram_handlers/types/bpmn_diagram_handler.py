@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 
 from ..core.base_handler import BaseDiagramHandler, LLMPredictionError
 from ..core.prompt_fragments import EXACT_NAMES_RULE, POSITION_DISCLAIMER, REMOVE_ELEMENT_RULE
-from schemas import SystemBPMNSpec, BPMNModificationResponse
+from schemas import SystemBPMNSpec, SystemAgenticBPMNSpec, BPMNModificationResponse
 from utilities.model_context import detailed_model_summary
 
 logger = logging.getLogger(__name__)
@@ -45,8 +45,31 @@ modify_node action. If no entry in the listing matches the user's description (b
 - Set message to explain what was not found, e.g.: "I couldn't find an element named 'Buy Groceries' in this diagram. Current nodes are: Document Review Started, Review by Reviewer 1, …"
 Partial matches are valid (e.g. "Reviewer 1" matching "Review by Reviewer 1"). Only set elementFound: false when there is genuinely no match.
 
-If the user says 'undo', 'undo that', 'revert', or similar, do not emit any modifications. Reply with modifications: [], elementFound: false, 
+If the user says 'undo', 'undo that', 'revert', or similar, do not emit any modifications. Reply with modifications: [], elementFound: false,
 and set message to: 'To undo, use Ctrl+Z or the undo button in the editor toolbar.'"""
+
+
+MODIFY_SYSTEM_PROMPT_AGENTIC_BPMN = f"""You are an agentic BPMN modeling expert. The user wants to modify a BPMN process with pools and swimlanes.
+
+READING THE CONTEXT:
+Each pool appears as:  Pool: [id] Name
+Each swimlane appears as:  Lane: [id] Name (role, isAgentic=true/false, multiplicity=N)
+Each node appears as:  [id] Name (type) [in lane: LaneName]
+Each flow appears as:  Flow: [src-id] Name -> [tgt-id] Name
+
+MODIFICATION RULES:
+1. Actions: "add_task", "add_gateway", "add_event", "add_flow", "modify_node", "remove_flow", "remove_element", "add_pool", "add_swimlane", "modify_swimlane", "remove_swimlane", "remove_pool"
+2. Standard node operations (add_task/gateway/event/flow, modify_node, remove_flow, remove_element): same as base BPMN. Use changes.owner to specify the swimlane name/id.
+3. add_pool: set target.nodeName to the pool name.
+4. add_swimlane: set target.nodeName to the lane name, changes.poolName to the pool name/id to add it to. Optional: changes.role ('manager'/'worker'), changes.isAgentic (true/false), changes.trustScore (0-100), changes.multiplicity (1+).
+5. modify_swimlane: set target.swimlaneName to the lane name. Put new values in changes (role, trustScore, multiplicity, name).
+6. remove_swimlane: set target.swimlaneName to the lane name.
+7. remove_pool: set target.poolName to the pool name.
+8. {REMOVE_ELEMENT_RULE}
+9. {EXACT_NAMES_RULE}
+
+If element not found: elementFound: false, modifications: [], explain in message.
+If user says 'undo': modifications: [], elementFound: false, message: 'To undo, use Ctrl+Z or the undo button in the editor toolbar.'"""
 
 
 class BPMNDiagramHandler(BaseDiagramHandler):
@@ -75,11 +98,34 @@ Node ids are short lowercase slugs ('check_stock') referenced by flows."""
     # Complete system (the primary generation path)
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _is_agentic_bpmn_request(user_request: str, current_model: Dict[str, Any] = None) -> bool:
+        """Detect if the user wants an agentic BPMN (with pools/swimlanes)."""
+        lower = (user_request or "").lower()
+        agentic_keywords = [
+            "pool", "swimlane", "participant", "multi-agent", "multiagent",
+            "swarm", "agentic bpmn", "agentic process", "orchestrat",
+        ]
+        if any(kw in lower for kw in agentic_keywords):
+            return True
+        if isinstance(current_model, dict):
+            elements = current_model.get("elements", {})
+            if isinstance(elements, dict):
+                return any(
+                    isinstance(el, dict) and el.get("type") in ("BPMNPool", "BPMNSwimlane")
+                    for el in elements.values()
+                )
+        return False
+
     def generate_complete_system(
         self, user_request: str, existing_model: Dict[str, Any] = None, **kwargs,
     ) -> Dict[str, Any]:
-        system_prompt = self.get_system_prompt()
         logger.info(f"[BPMN] generate_complete_system called with: {user_request!r}")
+
+        if self._is_agentic_bpmn_request(user_request, existing_model):
+            return self._generate_agentic_complete_system(user_request)
+
+        system_prompt = self.get_system_prompt()
 
         reasoning_prompt = (
             "You are a BPMN process-design expert. Think step by step about the "
@@ -120,6 +166,66 @@ Node ids are short lowercase slugs ('check_stock') referenced by flows."""
         except Exception as exc:
             logger.error(f"[BPMN] generate_complete_system FAILED: {exc}", exc_info=True)
             return self.generate_fallback_system()
+
+    def _generate_agentic_complete_system(self, user_request: str) -> Dict[str, Any]:
+        """Generate a BPMN process with pools and swimlanes (agentic BPMN)."""
+        system_prompt = """You are an agentic BPMN modeling expert. Create a BPMN process with pools and swimlanes from the user's request.
+
+DESIGN RULES:
+1. Use pools to group collaborating participants (organizations, agents, systems).
+2. Use swimlanes for individual participants within a pool. Set isAgentic=true for AI agents.
+3. Agent roles: 'manager' for orchestrators/supervisors, 'worker' for task executors.
+4. multiplicity: how many instances of this agent type run concurrently (usually 1, sometimes 2-5 for workers).
+5. Each flow node (task/event/gateway) MUST have its owner set to a swimlane id.
+6. Sequence flows connect nodes — they can cross swimlane boundaries for agent coordination.
+7. Use exactly ONE start event per process (in the manager/first lane if agentic).
+8. Keep focused: 1-2 pools, 2-5 lanes per pool, 1-3 tasks per lane. Do NOT add positions."""
+
+        reasoning_prompt = (
+            "You are an agentic process-design expert. Think step by step about the "
+            "following collaboration request and plan it before producing JSON.\n\n"
+            f"User Request: {user_request}\n\n"
+            "Analyze:\n"
+            "1. Who are the participants (agents/services)? Who manages, who executes?\n"
+            "2. How many instances of each participant are needed (multiplicity)?\n"
+            "3. What tasks does each participant perform?\n"
+            "4. How do they coordinate (what sequence flows cross lanes)?\n"
+            "5. What is the trigger and the completion conditions?\n\n"
+            "Focus on correct lane ownership — every task must be owned by a swimlane."
+        )
+
+        try:
+            parsed = self.predict_two_pass_structured(
+                user_request=user_request,
+                system_prompt=system_prompt,
+                reasoning_prompt=reasoning_prompt,
+                response_schema=SystemAgenticBPMNSpec,
+            )
+            system_spec = parsed.model_dump()
+            return {
+                "action": "inject_complete_system",
+                "systemSpec": system_spec,
+                "diagramType": self.get_diagram_type(),
+                "message": self._build_agentic_message(system_spec),
+            }
+        except LLMPredictionError as exc:
+            logger.error(f"[BPMN] _generate_agentic_complete_system LLM FAILED: {exc}")
+            return self._error_response("I couldn't generate that agentic process. Please try again.")
+        except Exception as exc:
+            logger.error(f"[BPMN] _generate_agentic_complete_system FAILED: {exc}", exc_info=True)
+            return self.generate_fallback_system()
+
+    def _build_agentic_message(self, spec: Dict[str, Any]) -> str:
+        name = spec.get("systemName") or "process"
+        pools = spec.get("pools", [])
+        nodes = spec.get("nodes", [])
+        total_lanes = sum(len(p.get("swimlanes", [])) for p in pools)
+        tasks = [n.get("name", "?") for n in nodes if n.get("type") == "task"][:5]
+        msg = f"Built the **{name}** agentic process with {len(pools)} pool(s) and {total_lanes} lane(s)"
+        if tasks:
+            msg += f": {', '.join(f'**{t}**' for t in tasks)}"
+        msg += ". Ask me to add agents, modify roles, or adjust the flow!"
+        return msg
 
     # ------------------------------------------------------------------
     # Validation / light repair (no LLM round-trip)
@@ -189,7 +295,11 @@ Node ids are short lowercase slugs ('check_stock') referenced by flows."""
     def generate_modification(
         self, user_request: str, current_model: Dict[str, Any] = None, **kwargs,
     ) -> Dict[str, Any]:
-        system_prompt = MODIFY_SYSTEM_PROMPT_BPMN
+        system_prompt = (
+            MODIFY_SYSTEM_PROMPT_AGENTIC_BPMN
+            if self._is_agentic_bpmn_request(user_request, current_model)
+            else MODIFY_SYSTEM_PROMPT_BPMN
+        )
 
         # Store elements on the instance so _build_mod_target_name can resolve
         # element names without needing a separate parameter thread.

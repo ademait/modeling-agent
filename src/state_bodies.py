@@ -352,6 +352,45 @@ def modeling_help_body(session: Session):
             "(e.g., 'Create a BPMN process for order fulfillment').\n\n"
             "Keep your response conversational, encouraging, and technically accurate."
         )
+    elif diagram_type == "ComponentDiagram":
+        help_prompt = (
+            f'You are an expert software architecture assistant. '
+            f'The user asked: "{request.message}"\n\n'
+            f'They are working with the UML Component Diagram editor.\n\n'
+            "You have deep knowledge of:\n"
+            "- Component diagram elements: Subsystems (containers grouping related components), "
+            "Components (services, agents, models, databases, tools), and ComponentDependencies\n"
+            "- Component stereotypes: «solution» (general component/agent), «llm» (language model), "
+            "«db» (database/storage), «rag» (retrieval-augmented), «tool» (utility), «skill» (capability)\n"
+            "- Dependency stereotypes: uses (service call), supervises (manager→worker), "
+            "collaborates (peer exchange), revises (feedback loop), delegates (task handoff)\n"
+            "- Architecture patterns: layered systems, microservices, agent pipelines, AI-assisted workflows\n\n"
+            "Provide clear, practical advice about component architecture modeling. "
+            "If they ask about an architecture pattern, explain the key components and how to express it. "
+            "If they want to build something, tell them they can ask you to create it "
+            "(e.g., 'Create a component diagram for a RAG-based question-answering system').\n\n"
+            "Keep your response conversational, encouraging, and technically accurate."
+        )
+    elif diagram_type == "DeploymentDiagram":
+        help_prompt = (
+            f'You are an expert deployment architecture assistant. '
+            f'The user asked: "{request.message}"\n\n'
+            f'They are working with the UML Deployment Diagram editor.\n\n'
+            "You have deep knowledge of:\n"
+            "- Deployment diagram elements: DeploymentNodes (servers, VMs, Docker hosts, cloud services), "
+            "DeploymentArtifacts (physical deployments inside nodes), "
+            "DeploymentComponents (logical software units), and DeploymentDependencies\n"
+            "- Node stereotypes: node (generic), device (hardware), cloud (cloud environment), server\n"
+            "- Typical patterns: 3-tier architectures, microservice deployments, "
+            "containerized workloads, cloud-native topologies\n"
+            "- Artifact-to-component correspondence: artifacts represent physical packages; "
+            "components represent the logical system they implement (linked via manifestedBy)\n\n"
+            "Provide clear, practical advice about deployment topology modeling. "
+            "If they ask about an infrastructure pattern, explain the nodes, artifacts, and communication paths. "
+            "If they want to build something, tell them they can ask you to create it "
+            "(e.g., 'Create a deployment diagram for a containerized microservices setup').\n\n"
+            "Keep your response conversational, encouraging, and technically accurate."
+        )
     elif diagram_type == "QuantumCircuitDiagram":
         help_prompt = (
             f'You are an expert quantum computing and quantum circuit modeling assistant. '

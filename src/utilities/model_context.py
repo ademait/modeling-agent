@@ -19,7 +19,7 @@ def compact_model_summary(model_data: Any, diagram_type: str) -> str:
     if not isinstance(model_data, dict):
         return f"{diagram_type}: no structured model available."
 
-    if diagram_type in {"ClassDiagram", "ObjectDiagram", "StateMachineDiagram", "AgentDiagram", "BPMN"}:
+    if diagram_type in {"ClassDiagram", "ObjectDiagram", "StateMachineDiagram", "AgentDiagram", "BPMN", "ComponentDiagram", "DeploymentDiagram"}:
         elements = model_data.get("elements")
         relationships = model_data.get("relationships")
         if isinstance(elements, dict) and isinstance(relationships, dict):
@@ -579,6 +579,112 @@ def _summarize_quantum_circuit(model: Dict[str, Any], *, max_cols: int = 30) -> 
     return lines
 
 
+def _summarize_component_diagram(model: Dict[str, Any], *, max_items: int = 25) -> List[str]:
+    """Summarize a ComponentDiagram model: subsystems, components, dependencies."""
+    elements = model.get("elements")
+    relationships = model.get("relationships")
+    if not isinstance(elements, dict):
+        return []
+
+    lines: List[str] = []
+    names: Dict[str, str] = {}
+
+    for eid, el in elements.items():
+        if not isinstance(el, dict) or el.get("type") != "Subsystem":
+            continue
+        name = el.get("name") or ""
+        names[eid] = name
+        stereotype = el.get("stereotype", "subsystem")
+        owner = el.get("owner")
+        owner_str = f" [in {names.get(owner, owner)}]" if owner else ""
+        lines.append(f"[{eid}] {name} (Subsystem:{stereotype}{owner_str})")
+
+    for eid, el in elements.items():
+        if not isinstance(el, dict) or el.get("type") != "Component":
+            continue
+        name = el.get("name") or ""
+        names[eid] = name
+        stereotype = el.get("stereotype", "solution")
+        owner = el.get("owner")
+        owner_name = names.get(owner, "") if owner else ""
+        owner_str = f" [in {owner_name}]" if owner_name else ""
+        lines.append(f"[{eid}] {name} (Component:{stereotype}{owner_str})")
+
+    if isinstance(relationships, dict):
+        for rel in relationships.values():
+            if not isinstance(rel, dict) or rel.get("type") != "ComponentDependency":
+                continue
+            source = rel.get("source", {})
+            target = rel.get("target", {})
+            s_id = source.get("element", "") if isinstance(source, dict) else ""
+            t_id = target.get("element", "") if isinstance(target, dict) else ""
+            s_name = names.get(s_id, s_id)
+            t_name = names.get(t_id, t_id)
+            stereotype = rel.get("stereotype", "uses")
+            lines.append(f"Dependency: [{s_id}] {s_name} --{stereotype}--> [{t_id}] {t_name}")
+
+    if len(lines) > max_items:
+        overflow = len(lines) - max_items
+        lines = lines[:max_items]
+        lines.append(f"  …and {overflow} more item(s)")
+    return lines
+
+
+def _summarize_deployment_diagram(model: Dict[str, Any], *, max_items: int = 25) -> List[str]:
+    """Summarize a DeploymentDiagram model: nodes, artifacts, components, dependencies."""
+    elements = model.get("elements")
+    relationships = model.get("relationships")
+    if not isinstance(elements, dict):
+        return []
+
+    lines: List[str] = []
+    names: Dict[str, str] = {}
+
+    for eid, el in elements.items():
+        if not isinstance(el, dict) or el.get("type") != "DeploymentNode":
+            continue
+        name = el.get("name") or ""
+        names[eid] = name
+        stereotype = el.get("stereotype", "node")
+        lines.append(f"[{eid}] {name} (Node:{stereotype})")
+
+    for eid, el in elements.items():
+        if not isinstance(el, dict) or el.get("type") != "DeploymentArtifact":
+            continue
+        name = el.get("name") or ""
+        names[eid] = name
+        owner = el.get("owner")
+        owner_name = names.get(owner, "") if owner else ""
+        owner_str = f" [in {owner_name}]" if owner_name else ""
+        lines.append(f"[{eid}] {name} (Artifact{owner_str})")
+
+    for eid, el in elements.items():
+        if not isinstance(el, dict) or el.get("type") != "DeploymentComponent":
+            continue
+        name = el.get("name") or ""
+        names[eid] = name
+        stereotype = el.get("stereotype", "solution")
+        lines.append(f"[{eid}] {name} (Component:{stereotype})")
+
+    if isinstance(relationships, dict):
+        for rel in relationships.values():
+            if not isinstance(rel, dict) or rel.get("type") != "DeploymentDependency":
+                continue
+            source = rel.get("source", {})
+            target = rel.get("target", {})
+            s_id = source.get("element", "") if isinstance(source, dict) else ""
+            t_id = target.get("element", "") if isinstance(target, dict) else ""
+            s_name = names.get(s_id, s_id)
+            t_name = names.get(t_id, t_id)
+            lines.append(f"Dependency: [{s_id}] {s_name} ---> [{t_id}] {t_name}")
+
+    if len(lines) > max_items:
+        overflow = len(lines) - max_items
+        lines = lines[:max_items]
+        lines.append(f"  …and {overflow} more item(s)")
+    return lines
+
+
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
@@ -632,6 +738,16 @@ def detailed_model_summary(model_data: Any, diagram_type: str) -> str:
         lines = _summarize_bpmn(model_data)
         if lines:
             return "Current BPMN process:\n- " + "\n- ".join(lines)
+
+    elif diagram_type == "ComponentDiagram":
+        lines = _summarize_component_diagram(model_data)
+        if lines:
+            return "Current component diagram:\n- " + "\n- ".join(lines)
+
+    elif diagram_type == "DeploymentDiagram":
+        lines = _summarize_deployment_diagram(model_data)
+        if lines:
+            return "Current deployment diagram:\n- " + "\n- ".join(lines)
 
     # Fallback to compact
     return compact_model_summary(model_data, diagram_type)

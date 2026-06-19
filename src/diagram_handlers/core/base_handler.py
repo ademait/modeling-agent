@@ -281,7 +281,15 @@ class BaseDiagramHandler(ABC):
         class_name = (
             target.get('className') or target.get('stateName')
             or target.get('objectName') or target.get('nodeName')
+            or target.get('elementName')  # Component / Deployment diagram
         )
+        # Resolve elementId → name via current-model cache when elementName is absent
+        if not class_name and target.get('elementId'):
+            eid = target['elementId']
+            elements = getattr(self, '_elements', {})
+            el = elements.get(eid, {})
+            class_name = el.get('name') or eid
+
         attr_name = target.get('attributeName')
         method_name = target.get('methodName')
         rel_source = target.get('sourceClass')
