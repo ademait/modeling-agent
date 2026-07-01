@@ -29,14 +29,16 @@ Each flow appears as:  Flow: [src-id] Name -> [tgt-id] Name
 
 MODIFICATION RULES:
 1. Actions available: "add_task", "add_gateway", "add_event", "add_flow", "modify_node", "remove_flow", "remove_element"
-2. add_task: set target.nodeName to the task name. Optional changes.taskType (default/user/service/send/receive/manual/business-rule/script).
-3. add_gateway: set target.nodeName to the gateway label/question. Optional changes.gatewayType (exclusive/parallel/inclusive). Default exclusive.
-4. add_event: set target.nodeName and changes.eventKind to "start", "end", or "intermediate".
+2. add_task: set target.nodeName to the task name only. Do NOT append UI/type suffixes like "(Task)". Optional changes.taskType (default/user/service/send/receive/manual/business-rule/script).
+3. add_gateway: set target.nodeName to the gateway label/question only. Do NOT append "(Gateway)". Optional changes.gatewayType (exclusive/parallel/inclusive). Default exclusive.
+4. add_event: set target.nodeName and changes.eventKind to "start", "end", or "intermediate". Do NOT append "(Event)".
 5. add_flow: set changes.source and changes.target to the node ID (exact [id] from context) or name. Use the id for unnamed nodes.
-6. modify_node: {EXACT_NAMES_RULE} For unnamed nodes set target.nodeId to the exact [id] from the context. Put the new name in changes.name (and/or changes.taskType / changes.gatewayType).
-7. {REMOVE_ELEMENT_RULE} For remove_element: use target.nodeName for named nodes; for UNNAMED nodes set target.nodeId to the exact [id] from the context. Connected flows are removed automatically.
-8. remove_flow: set changes.source and changes.target to the node IDs or names of the flow endpoints.
-9. For NAMED nodes you may use the display name. For UNNAMED nodes (no name shown before the type) you MUST use the exact id from [id].
+6. Never put flow endpoints inside add_task/add_gateway/add_event. Connections must be emitted as separate add_flow actions.
+7. modify_node: {EXACT_NAMES_RULE} For unnamed nodes set target.nodeId to the exact [id] from the context. Put the new name in changes.name (and/or changes.taskType / changes.gatewayType).
+8. {REMOVE_ELEMENT_RULE} For remove_element: use target.nodeName for named nodes; for UNNAMED nodes set target.nodeId to the exact [id] from the context. Connected flows are removed automatically.
+9. remove_flow: set changes.source and changes.target to the node IDs or names of the flow endpoints.
+10. For NAMED nodes you may use the display name. For UNNAMED nodes (no name shown before the type) you MUST use the exact id from [id].
+11. If the user asks for "a second", "another", or "one more" task, add exactly ONE new task unless they explicitly ask for two or more.
 
 When the user asks to remove or modify an element, always verify the element exists in the current context listing before emitting any remove_element or
 modify_node action. If no entry in the listing matches the user's description (by name or id):
@@ -319,8 +321,120 @@ DESIGN RULES:
         logger.info(f"[BPMN] generate_modification called with: {user_request!r}")
 
         try:
+            def _normalize_bpmn_mods(mod_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+                """Normalize common malformed BPMN batches from the LLM.
+
+                - Convert synthetic ids for newly-added nodes into stable names for
+                  same-batch flow references.
+                - Expand add_task/add_gateway/add_event entries that incorrectly
+                  embed source/target refs into explicit add_flow actions.
+                - Prefer clean node labels over leaked UI/type suffixes such as
+                  ``"Record video demo 1 (Task)"``.
+                """
+                alias_to_name: Dict[str, str] = {}
+                node_add_actions = {"add_task", "add_gateway", "add_event"}
+
+                def _clean_added_name(action: str, target: Dict[str, Any], changes: Dict[str, Any]) -> Optional[str]:
+                    target_name = (target.get("nodeName") or "").strip()
+                    change_name = (changes.get("name") or "").strip()
+                    if change_name:
+                        typed_suffixes = {
+                            "add_task": " (Task)",
+                            "add_gateway": " (Gateway)",
+                            "add_event": " (Event)",
+                        }
+                        suffix = typed_suffixes.get(action)
+                        if suffix and target_name == f"{change_name}{suffix}":
+                            return change_name
+                    return target_name or change_name or None
+
+                def _register_alias(name: Optional[str], alias: Optional[str]) -> None:
+                    if alias and name:
+                        alias_to_name[alias] = name
+
+                for mod in mod_list:
+                    if not isinstance(mod, dict):
+                        continue
+                    action = mod.get("action", "")
+                    if action not in node_add_actions:
+                        continue
+                    target = mod.get("target") or {}
+                    changes = mod.get("changes") or {}
+                    clean_name = _clean_added_name(action, target, changes)
+                    if not clean_name:
+                        continue
+                    _register_alias(clean_name, clean_name)
+                    _register_alias(clean_name, target.get("nodeId"))
+                    _register_alias(clean_name, target.get("nodeName"))
+                    _register_alias(clean_name, changes.get("name"))
+
+                normalized: List[Dict[str, Any]] = []
+                expanded_flows = 0
+
+                for mod in mod_list:
+                    if not isinstance(mod, dict):
+                        normalized.append(mod)
+                        continue
+
+                    action = mod.get("action", "")
+                    target = dict(mod.get("target") or {})
+                    changes = dict(mod.get("changes") or {})
+
+                    if action in node_add_actions:
+                        clean_name = _clean_added_name(action, target, changes)
+                        if clean_name:
+                            target["nodeName"] = clean_name
+                            if changes.get("name") is not None:
+                                changes["name"] = clean_name
+
+                        raw_embedded_source = changes.pop("source", None)
+                        raw_embedded_target = changes.pop("target", None)
+                        embedded_source = alias_to_name.get(raw_embedded_source, raw_embedded_source)
+                        embedded_target = alias_to_name.get(raw_embedded_target, raw_embedded_target)
+                        embedded_label = changes.pop("label", None)
+
+                        updated_mod = dict(mod)
+                        updated_mod["target"] = target
+                        updated_mod["changes"] = changes or None
+                        normalized.append(updated_mod)
+
+                        if embedded_source and embedded_target:
+                            normalized.append(
+                                {
+                                    "action": "add_flow",
+                                    "target": {},
+                                    "changes": {
+                                        "source": embedded_source,
+                                        "target": embedded_target,
+                                        "label": embedded_label,
+                                    },
+                                }
+                            )
+                            expanded_flows += 1
+                        continue
+
+                    if action in ("add_flow", "remove_flow"):
+                        if changes.get("source") in alias_to_name:
+                            changes["source"] = alias_to_name[changes["source"]]
+                        if changes.get("target") in alias_to_name:
+                            changes["target"] = alias_to_name[changes["target"]]
+                        updated_mod = dict(mod)
+                        updated_mod["target"] = target
+                        updated_mod["changes"] = changes
+                        normalized.append(updated_mod)
+                        continue
+
+                    normalized.append(mod)
+
+                if expanded_flows:
+                    logger.info(
+                        f"[BPMN] Normalized {expanded_flows} embedded node-connection(s) into explicit add_flow action(s)"
+                    )
+                return normalized
+
             result = self._execute_modification(
                 user_prompt, system_prompt, BPMNModificationResponse,
+                post_processor=_normalize_bpmn_mods,
             )
             return self._validate_mod_refs(result)
         except LLMPredictionError as exc:
@@ -453,7 +567,7 @@ DESIGN RULES:
 
     @staticmethod
     def _bpmn_resolve(ref: Optional[str], elements: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Look up a BPMN element by Apollon id (exact key) then by name (case-insensitive)."""
+        """Look up a BPMN element by id, exact name, or unique unnamed type label."""
         if not ref or not isinstance(elements, dict):
             return None
         el = elements.get(ref)
@@ -463,6 +577,14 @@ DESIGN RULES:
         for el in elements.values():
             if isinstance(el, dict) and (el.get("name") or "").lower() == lower:
                 return el
+        unnamed_matches = [
+            el for el in elements.values()
+            if isinstance(el, dict)
+            and not (el.get("name") or "").strip()
+            and BPMNDiagramHandler._bpmn_el_type_label(el).lower() == lower
+        ]
+        if len(unnamed_matches) == 1:
+            return unnamed_matches[0]
         return None
 
     # ------------------------------------------------------------------
@@ -519,6 +641,112 @@ DESIGN RULES:
             return src_ok and tgt_ok
         return True
 
+    @staticmethod
+    def _preview_register_element(
+        preview: Dict[str, Any], element: Dict[str, Any], *aliases: Optional[str],
+    ) -> Dict[str, Any]:
+        for alias in aliases:
+            if alias:
+                preview[alias] = element
+        return preview
+
+    @staticmethod
+    def _preview_remove_element(preview: Dict[str, Any], element: Dict[str, Any]) -> Dict[str, Any]:
+        keys_to_remove = [key for key, candidate in preview.items() if candidate is element]
+        for key in keys_to_remove:
+            preview.pop(key, None)
+        return preview
+
+    def _apply_preview_mod(self, mod: Dict[str, Any], elements: Dict[str, Any]) -> Dict[str, Any]:
+        """Return a preview element map after applying the modification.
+
+        This lets later modifications in the same batch resolve refs to nodes
+        added or renamed earlier in the response, while preserving the existing
+        guardrail against references to elements that never existed.
+        """
+        if not isinstance(elements, dict):
+            return {}
+
+        preview = dict(elements)
+        action = mod.get("action", "")
+        target = mod.get("target") or {}
+        changes = mod.get("changes") or {}
+
+        if action == "add_task":
+            name = target.get("nodeName") or changes.get("name")
+            if name:
+                element = {"type": "BPMNTask", "name": name, "taskType": changes.get("taskType", "default")}
+                preview = self._preview_register_element(
+                    preview, element, target.get("nodeId"), target.get("nodeName"), changes.get("name"),
+                )
+            return preview
+
+        if action == "add_gateway":
+            name = target.get("nodeName") or changes.get("name")
+            if name:
+                element = {
+                    "type": "BPMNGateway", "name": name, "gatewayType": changes.get("gatewayType", "exclusive"),
+                }
+                preview = self._preview_register_element(
+                    preview, element, target.get("nodeId"), target.get("nodeName"), changes.get("name"),
+                )
+            return preview
+
+        if action == "add_event":
+            name = target.get("nodeName") or changes.get("name")
+            event_kind = changes.get("eventKind", "intermediate")
+            if name:
+                element = {"type": f"BPMN{event_kind.capitalize()}Event", "name": name}
+                preview = self._preview_register_element(
+                    preview, element, target.get("nodeId"), target.get("nodeName"), changes.get("name"),
+                )
+            return preview
+
+        if action == "modify_node":
+            ref = target.get("nodeId") or target.get("nodeName")
+            element = self._bpmn_resolve(ref, preview)
+            if element is None:
+                return preview
+            new_name = changes.get("name")
+            if new_name and new_name != element.get("name"):
+                updated = dict(element)
+                updated["name"] = new_name
+
+                matched_key = None
+                for key, candidate in preview.items():
+                    if candidate is element:
+                        matched_key = key
+                        break
+
+                if matched_key is not None:
+                    for key, candidate in list(preview.items()):
+                        if candidate is element:
+                            preview[key] = updated
+                    preview.setdefault(new_name, updated)
+                return preview
+
+            return preview
+
+        if action == "remove_element":
+            ref = target.get("nodeId") or target.get("nodeName")
+            matched_key = None
+            matched_element = None
+            for key, candidate in preview.items():
+                if key == ref:
+                    matched_key = key
+                    matched_element = candidate
+                    break
+                if isinstance(candidate, dict) and (candidate.get("name") or "").lower() == (ref or "").lower():
+                    matched_key = key
+                    matched_element = candidate
+                    break
+
+            if matched_key is not None:
+                preview = self._preview_remove_element(preview, matched_element)
+            return preview
+
+        return preview
+
     def _validate_mod_refs(self, result: Dict[str, Any]) -> Dict[str, Any]:
         """Drop modifications whose element refs cannot be resolved in the current model.
 
@@ -531,7 +759,12 @@ DESIGN RULES:
 
         if "modifications" in result:
             mods = result["modifications"]
-            valid = [m for m in mods if self._ref_exists(m, elements)]
+            preview_elements = dict(elements)
+            valid = []
+            for mod in mods:
+                if self._ref_exists(mod, preview_elements):
+                    valid.append(mod)
+                    preview_elements = self._apply_preview_mod(mod, preview_elements)
             dropped = len(mods) - len(valid)
             if dropped:
                 logger.info(f"[BPMN] Dropped {dropped} modification(s) with unresolved element ref(s)")
